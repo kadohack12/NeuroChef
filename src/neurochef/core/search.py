@@ -1,11 +1,13 @@
-"""Bounded graph search over byte transformations."""
+"""Bounded A* / best-first graph search over byte transformations."""
 
 from __future__ import annotations
 
-from collections import deque
+import heapq
 from collections.abc import Sequence
 from dataclasses import dataclass
+from itertools import count
 
+from neurochef.ai import BaseRanker, HeuristicRanker
 from neurochef.evaluators import Evaluation, score_bytes
 from neurochef.transforms import DEFAULT_TRANSFORMS, Transform
 
@@ -21,77 +23,83 @@ class SearchResult:
     data: bytes
     steps: tuple[SearchStep, ...]
     evaluation: Evaluation
+    nodes_explored: int = 0
 
 
 class SearchEngine:
-    """Breadth-first decoder with depth and node limits.
-
-    Transforms are deliberately untrusted: invalid inputs simply yield no candidate.
-    The best-scoring state is returned, which makes the MVP useful even when no
-    candidate reaches a perfect terminal score.
-    """
+    """Priority-guided decoder with depth, node and state-duplication limits."""
 
     def __init__(
         self,
         transforms: Sequence[Transform] = DEFAULT_TRANSFORMS,
         max_depth: int = 5,
         max_nodes: int = 10_000,
+        ranker: BaseRanker | None = None,
     ) -> None:
         self.transforms = tuple(transforms)
         self.max_depth = max_depth
         self.max_nodes = max_nodes
+        self.ranker = ranker or HeuristicRanker()
 
     def search(self, data: bytes) -> SearchResult:
-        queue: deque[tuple[bytes, tuple[SearchStep, ...]]] = deque([(data, ())])
+        sequence = count()
+        # (estimated total cost, insertion order, data, path, path cost)
+        queue: list[tuple[float, int, bytes, tuple[SearchStep, ...], float]] = [
+            (0.0, next(sequence), data, (), 0.0)
+        ]
         visited: set[bytes] = {data}
         best = SearchResult(data, (), score_bytes(data))
-        nodes = 0
+        nodes_explored = 0
 
-        while queue and nodes < self.max_nodes:
-            current, path = queue.popleft()
+        while queue and nodes_explored < self.max_nodes:
+            _priority, _order, current, path, path_cost = heapq.heappop(queue)
+            nodes_explored += 1
             current_eval = score_bytes(current)
-            candidate = SearchResult(current, path, current_eval)
+            candidate = SearchResult(current, path, current_eval, nodes_explored)
             if self._rank(candidate) > self._rank(best):
                 best = candidate
+            if current_eval.score >= 0.75 and path:
+                return candidate
             if len(path) >= self.max_depth:
                 continue
-            for transform in self.transforms:
-                if not self._applicable(transform, current):
-                    continue
+
+            applicable = [
+                transform for transform in self.transforms if self._applicable(transform, current)
+            ]
+            ranked = self.ranker.rank(current, applicable)
+            for transform, transform_score in ranked:
+                # Convert a high probability into a low A* edge cost.
+                edge_cost = 1.0 - transform_score
                 for decoded in transform.candidates(current):
-                    nodes += 1
-                    if nodes >= self.max_nodes:
-                        break
                     if not decoded or decoded == current or decoded in visited:
                         continue
                     visited.add(decoded)
                     next_path = path + (SearchStep(transform.name, decoded),)
+                    next_cost = path_cost + edge_cost
                     decoded_eval = score_bytes(decoded)
                     if decoded_eval.score >= 0.75:
-                        return SearchResult(decoded, next_path, decoded_eval)
-                    queue.append((decoded, next_path))
-                if nodes >= self.max_nodes:
-                    break
-        return best
+                        return SearchResult(decoded, next_path, decoded_eval, nodes_explored)
+                    # Tiny depth penalty prevents endless low-cost expansion ties.
+                    priority = next_cost + len(next_path) * 0.01
+                    heapq.heappush(
+                        queue,
+                        (priority, next(sequence), decoded, next_path, next_cost),
+                    )
+        return SearchResult(best.data, best.steps, best.evaluation, nodes_explored)
 
     @staticmethod
     def _applicable(transform: Transform, data: bytes) -> bool:
         """Apply obvious format gates before expensive fan-out transforms."""
         if len(data) >= 2 and len(data) % 2 == 0:
-            try:
-                is_hex = all(byte in b"0123456789abcdefABCDEF" for byte in data)
-            except TypeError:
-                is_hex = False
+            is_hex = all(byte in b"0123456789abcdefABCDEF" for byte in data)
             if is_hex:
                 return transform.name == "from_hex"
         return True
 
     @staticmethod
     def _rank(result: SearchResult) -> tuple[float, int, int]:
-        # A small depth tie-break rewards actually decoding a layer without
-        # allowing depth to overpower the evaluator.
         return (result.evaluation.score, len(result.steps), -len(result.data))
 
     def solve(self, data: bytes) -> SearchResult:
-        """Alias intended for CLI callers and future strategy implementations."""
+        """Solve an input and retain exploration metrics for diagnostics."""
         return self.search(data)

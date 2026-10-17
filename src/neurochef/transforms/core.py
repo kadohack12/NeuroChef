@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import binascii
 import codecs
+import gzip
 import string
 import urllib.parse
 import zlib
@@ -114,6 +115,37 @@ class ZlibDecompress(Transform):
             return None
 
 
+class GzipDecompress(Transform):
+    name = "gzip_decompress"
+
+    def __call__(self, data: bytes) -> bytes | None:
+        if not data.startswith(b"\x1f\x8b"):
+            return None
+        try:
+            return _valid_decoded(gzip.decompress(data))
+        except (OSError, EOFError):
+            return None
+
+
+class Base85Decode(Transform):
+    name = "base85"
+
+    def __call__(self, data: bytes) -> bytes | None:
+        if len(data) < 5:
+            return None
+        try:
+            return _valid_decoded(base64.a85decode(data, adobe=False))
+        except (ValueError, binascii.Error):
+            return None
+
+
+class Reverse(Transform):
+    name = "reverse"
+
+    def __call__(self, data: bytes) -> bytes | None:
+        return data[::-1] if len(data) > 1 else None
+
+
 DEFAULT_TRANSFORMS: tuple[Transform, ...] = (
     Base64Decode(),
     FromHex(),
@@ -121,4 +153,7 @@ DEFAULT_TRANSFORMS: tuple[Transform, ...] = (
     ROT13(),
     SingleByteXOR(max_candidates=256),
     ZlibDecompress(),
+    GzipDecompress(),
+    Base85Decode(),
+    Reverse(),
 )
