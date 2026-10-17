@@ -1,0 +1,28 @@
+[project]
+name = "neurochef"
+version = "0.1.0"
+description = "Byte-oriented automatic decoding engine inspired by CyberChef and Ciphey"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Kadohack12" }]
+dependencies = []
+
+[project.scripts]
+neurochef = "neurochef.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8.0", "ruff>=0.6"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
