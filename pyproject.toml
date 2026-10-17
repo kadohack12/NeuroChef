@@ -6,7 +6,10 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "Kadohack12" }]
-dependencies = []
+dependencies = [
+    "onnx>=1.23.2",
+    "onnxruntime>=1.31.0",
+]
 
 [project.scripts]
 neurochef = "neurochef.cli:main"

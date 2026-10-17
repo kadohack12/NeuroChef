@@ -1,4 +1,4 @@
-"""Numerical features used by transform rankers."""
+"""Numerical features used by transform rankers and the ONNX model."""
 
 from __future__ import annotations
 
@@ -14,14 +14,33 @@ _BASE85_BYTES = frozenset(
     b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz!#$%&()*+-;<=>?@^_`{|}~"
 )
 
+# The ONNX graph has no feature-name metadata. Keep this order versioned and
+# explicit: it is the contract between FeatureExtractor and neuro_ranker.
+FEATURE_ORDER = (
+    "shannon_entropy",
+    "printable_ratio",
+    "hex_ratio",
+    "base64_ratio",
+    "base85_ratio",
+    "has_magic_bytes",
+    "length",
+    "is_multiple_of_2",
+    "is_multiple_of_4",
+    "is_gzip",
+    "is_zlib",
+    "has_pe_header",
+    "has_elf_header",
+    "has_archive_header",
+)
+
 
 class FeatureExtractor:
-    """Extract cheap numeric features from arbitrary bytes."""
+    """Extract exactly fourteen finite numeric features from arbitrary bytes."""
 
     def extract(self, data: bytes) -> dict[str, float]:
         compact = b"".join(data.split())
         magic = detect_magic(data)
-        return {
+        features = {
             "shannon_entropy": shannon_entropy(data),
             "printable_ratio": self._printable_ratio(data),
             "hex_ratio": self._ratio(compact, _HEX_BYTES),
@@ -31,10 +50,18 @@ class FeatureExtractor:
             "length": float(len(data)),
             "is_multiple_of_2": float(len(compact) % 2 == 0),
             "is_multiple_of_4": float(len(compact) % 4 == 0),
-            # Extra context lets the heuristic distinguish gzip from other headers.
             "is_gzip": float("gzip" in magic),
             "is_zlib": float(data.startswith((b"x\x01", b"x\x9c", b"x\xda"))),
+            "has_pe_header": float("pe" in magic),
+            "has_elf_header": float("elf" in magic),
+            "has_archive_header": float("zip" in magic),
         }
+        return {name: float(features[name]) for name in FEATURE_ORDER}
+
+    def vector(self, data: bytes) -> list[float]:
+        """Return the ONNX input vector in the model's declared feature order."""
+        features = self.extract(data)
+        return [features[name] for name in FEATURE_ORDER]
 
     @staticmethod
     def _ratio(data: bytes, allowed: frozenset[int]) -> float:

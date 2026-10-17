@@ -22,6 +22,10 @@ Architecture :
 
 Le MVP privilégie la robustesse : un transform invalide renvoie `None`, la recherche est bornée par profondeur et nombre de nœuds, et les résultats gardent la chaîne de transformations appliquée.
 
+## Ranker ONNX local
+
+Le modèle optionnel `models/neuro_ranker_optimized.onnx` est chargé par `ONNXRanker`. Sa signature inspectée est `float_input: float32[None, 14]`, avec les sorties `output_label` et `output_probability` (séquence de dictionnaires classe→probabilité). L’ordre de features est versionné dans `neurochef.ai.features.FEATURE_ORDER` et contrôlé à l’initialisation. Si le modèle est absent, invalide ou si l’inférence échoue, le ranker revient automatiquement à `HeuristicRanker`.
+
 ## Ranking et recherche guidée
 
 Le moteur utilise maintenant une file de priorité A* best-first et injecte un `HeuristicRanker` par défaut. Les sorties exposent `nodes_explored` pour mesurer l’efficacité du guidage. `LLMRanker` peut utiliser Ollama local ou une API compatible OpenAI/Anthropic, mais revient automatiquement à l’heuristique si le service est indisponible ou incertain.
